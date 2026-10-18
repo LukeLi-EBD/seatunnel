@@ -71,11 +71,13 @@ import java.util.stream.Stream;
 import static org.awaitility.Awaitility.await;
 
 /**
- * Integration test for MySQL CDC {@code stop.mode = "specific"}.
+ * Integration test for the MySQL CDC bounded read (stop) modes.
  *
- * <p>Starts a MySQL CDC job that reads the binlog between a configured start offset and a
- * configured stop offset, and asserts that the job terminates (FINISHED) at the stop offset instead
- * of running forever, and that only the rows written before the stop offset are synced.
+ * <p>Starts a MySQL CDC job that reads the binlog between a configured start offset/timestamp and a
+ * configured stop offset/timestamp, and asserts that the job terminates (FINISHED) at the stop
+ * offset/timestamp instead of running forever, and that only the rows written in that window are
+ * synced. Both {@code stop.mode = "specific"} and {@code stop.mode = "timestamp"} are covered, also
+ * combined with a {@code startup.mode = "timestamp"}.
  */
 @Slf4j
 @DisabledOnContainer(
@@ -305,6 +307,105 @@ public class MysqlCDCStopModeSpecificIT extends TestSuiteBase implements TestRes
                                     sinkIds.contains(Collections.singletonList(35))
                                             || sinkIds.contains(Collections.singletonList(36)),
                                     "rows after the stop offset must not be synced, got: "
+                                            + sinkIds);
+                        });
+    }
+
+    @TestTemplate
+    public void testMysqlCdcTimestampStartupWithTimestampStop(TestContainer container)
+            throws Exception {
+        String jobId = String.valueOf(JobIdGenerator.newJobId());
+        String jobConfigFile = "/mysqlcdc_stop_mode_timestamp.conf";
+
+        clearTable(MYSQL_DATABASE, SOURCE_TABLE);
+        clearTable(MYSQL_DATABASE, SINK_TABLE);
+
+        // Rows written before the startup timestamp: must NOT be synced.
+        executeSql(
+                String.format(
+                        "INSERT INTO %s.%s (id) VALUES (41), (42)", MYSQL_DATABASE, SOURCE_TABLE));
+
+        // MySQL binlog timestamps have second granularity, wait so the startup timestamp
+        // is clearly after the rows above.
+        Thread.sleep(3000L);
+
+        // Take the startup timestamp before inserting the rows that must be synced,
+        // so their binlog event timestamps are greater than the startup timestamp.
+        long startTimestamp = getCurrentBinlogTimestamp() + 2000L;
+
+        // Rows written after the startup timestamp and before the stop timestamp: must be synced.
+        executeSql(
+                String.format(
+                        "INSERT INTO %s.%s (id) VALUES (43), (44)", MYSQL_DATABASE, SOURCE_TABLE));
+
+        // MySQL binlog timestamps have second granularity, wait so the rows above are in a
+        // previous second than the stop timestamp computed below.
+        Thread.sleep(3000L);
+
+        // The stop timestamp is one second after the rows that must be synced, so the reader
+        // keeps reading them but stops as soon as a later binlog event (with an equal or later
+        // second) is reached.
+        long stopTimestamp = getCurrentBinlogTimestamp() + 1000L;
+
+        String[] variables = {
+            "start_timestamp=" + startTimestamp, "stop_timestamp=" + stopTimestamp
+        };
+        log.info("Startup timestamp: {}, stop timestamp: {}", startTimestamp, stopTimestamp);
+
+        CompletableFuture<Container.ExecResult> jobFuture =
+                CompletableFuture.supplyAsync(
+                        () -> {
+                            try {
+                                return container.executeJob(jobConfigFile, jobId, variables);
+                            } catch (Exception e) {
+                                log.error("Commit task exception :" + e.getMessage());
+                                throw new RuntimeException(e);
+                            }
+                        });
+
+        // Wait until the rows within the timestamp window are synced.
+        await().atMost(60000, TimeUnit.MILLISECONDS)
+                .untilAsserted(
+                        () -> {
+                            List<List<Object>> sinkIds = queryIds();
+                            Assertions.assertTrue(
+                                    sinkIds.contains(Collections.singletonList(43))
+                                            && sinkIds.contains(Collections.singletonList(44)),
+                                    "rows within the timestamp window must be synced, got: "
+                                            + sinkIds);
+                        });
+
+        // Rows written after the stop timestamp: must NOT be synced. They are inserted only
+        // after the rows in the window have been synced, so they can only be picked up by the
+        // binlog phase, which must stop at the configured stop timestamp.
+        executeSql(
+                String.format(
+                        "INSERT INTO %s.%s (id) VALUES (45), (46)", MYSQL_DATABASE, SOURCE_TABLE));
+
+        // The bounded job must terminate on its own at the stop timestamp.
+        Container.ExecResult result = jobFuture.get(120, TimeUnit.SECONDS);
+        Assertions.assertEquals(0, result.getExitCode(), result.getStderr());
+
+        // Only the rows written after the startup timestamp and before the stop timestamp
+        // must be present in the sink.
+        await().atMost(30000, TimeUnit.MILLISECONDS)
+                .untilAsserted(
+                        () -> {
+                            List<List<Object>> sinkIds = queryIds();
+                            Assertions.assertTrue(
+                                    sinkIds.contains(Collections.singletonList(43))
+                                            && sinkIds.contains(Collections.singletonList(44)),
+                                    "rows within the timestamp window must be synced, got: "
+                                            + sinkIds);
+                            Assertions.assertFalse(
+                                    sinkIds.contains(Collections.singletonList(41))
+                                            || sinkIds.contains(Collections.singletonList(42)),
+                                    "rows before the startup timestamp must not be synced, got: "
+                                            + sinkIds);
+                            Assertions.assertFalse(
+                                    sinkIds.contains(Collections.singletonList(45))
+                                            || sinkIds.contains(Collections.singletonList(46)),
+                                    "rows after the stop timestamp must not be synced, got: "
                                             + sinkIds);
                         });
     }

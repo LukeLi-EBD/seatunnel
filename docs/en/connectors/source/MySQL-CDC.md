@@ -200,9 +200,10 @@ When an initial consistent snapshot is made for large databases, your establishe
 | startup.specific-offset.skip-events       | Long     | No       | 0       | Number of binlog events to skip after the configured specific startup offset. This option can only be used when `startup.mode` is `specific`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
 | startup.specific-offset.skip-rows         | Long     | No       | 0       | Number of rows to skip after the configured specific startup offset. This option can only be used when `startup.mode` is `specific`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 | startup.timestamp                         | Long     | No       | -       | Start from the specified timestamp, in milliseconds since Unix epoch. **Note, This option is required when the `startup.mode` option uses `timestamp`.**                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
-| stop.mode                                 | Enum     | No       | NEVER   | Optional stop mode for MySQL CDC consumer, valid enumerations are `never`, `latest` or `specific`. <br/> `never`: Real-time job don't stop the source.<br/> `latest`: Stop from the latest offset.<br/> `specific`: Stop from user-supplied specific offset.                                                                                                                                                                                                                                                                                                                                                         |
+| stop.mode                                 | Enum     | No       | NEVER   | Optional stop mode for MySQL CDC consumer, valid enumerations are `never`, `latest`, `specific` or `timestamp`. <br/> `never`: Real-time job don't stop the source.<br/> `latest`: Stop from the latest offset.<br/> `specific`: Stop from user-supplied specific offset.<br/> `timestamp`: Stop from the user-supplied timestamp.                                                                                                                                                                                                                                                                                                                                                                                                                    |
 | stop.specific-offset.file                 | String   | No       | -       | Stop from the specified binlog file name. **Note, This option is required when the `stop.mode` option used `specific`.**                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | stop.specific-offset.pos                  | Long     | No       | -       | Stop from the specified binlog file position. **Note, This option is required when the `stop.mode` option used `specific`.**                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| stop.timestamp                            | Long     | No       | -       | Stop from the specified timestamp, in milliseconds since Unix epoch. The reader stops as soon as a binlog event whose timestamp is equal to or later than this value is reached. **Note, This option is required when the `stop.mode` option uses `timestamp`.**                                                                                                                                                                                                                                                                                                                                                   |
 | snapshot.split.size                       | Integer  | No       | 8096    | The split size (number of rows) of table snapshot, captured tables are split into multiple splits when read the snapshot of table.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | snapshot.fetch.size                       | Integer  | No       | 1024    | The maximum fetch size for per poll when read table snapshot.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 | server-id                                 | String   | No       | -       | Numeric ID or numeric ID range used by this CDC reader, for example `5400` or `5400-5408`. Each ID must be unique in the MySQL cluster. When the job has multiple readers or reads multiple tables in parallel, configure an ID range large enough for the job. If this option is omitted, SeaTunnel generates a random ID, but an explicit value is recommended for production.                                                                                                                 |
@@ -574,6 +575,31 @@ source {
     stop.mode = "specific"
     stop.specific-offset.file = "mysql-bin.000010"
     stop.specific-offset.pos = 4096
+  }
+}
+```
+
+### Bounded Read: Stop at a Timestamp
+
+Use `stop.mode = "timestamp"` to bound the read by time: the job reads the binlog from the
+startup offset (or startup timestamp) until a binlog event whose timestamp reaches the configured
+`stop.timestamp`, then terminates (`FINISHED`).
+
+Both `startup.mode` and `stop.mode` can be `timestamp` at the same time, so the whole read window
+is described by two timestamps:
+
+```hocon
+source {
+  MySQL-CDC {
+    server-id = 5654
+    username = "st_user_source"
+    password = "mysqlpw"
+    table-names = ["mysql_cdc.mysql_cdc_e2e_source_table"]
+    url = "jdbc:mysql://mysql_cdc_e2e:3306/mysql_cdc"
+    startup.mode = "timestamp"
+    startup.timestamp = 1716076800000
+    stop.mode = "timestamp"
+    stop.timestamp = 1716080400000
   }
 }
 ```

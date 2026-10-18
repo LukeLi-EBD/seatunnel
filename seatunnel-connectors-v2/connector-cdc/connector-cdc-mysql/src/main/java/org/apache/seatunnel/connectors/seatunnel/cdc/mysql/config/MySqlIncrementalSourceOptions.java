@@ -77,9 +77,13 @@ public class MySqlIncrementalSourceOptions extends JdbcSourceOptions implements 
             Options.key(SourceOptions.STOP_MODE_KEY)
                     .singleChoice(
                             StopMode.class,
-                            Arrays.asList(StopMode.LATEST, StopMode.SPECIFIC, StopMode.NEVER))
+                            Arrays.asList(
+                                    StopMode.LATEST,
+                                    StopMode.TIMESTAMP,
+                                    StopMode.SPECIFIC,
+                                    StopMode.NEVER))
                     .defaultValue(StopMode.NEVER)
                     .withDescription(
                             "Optional stop mode for CDC source, valid enumerations are "
-                                    + "\"never\", \"latest\" or \"specific\"");
+                                    + "\"never\", \"latest\", \"timestamp\" or \"specific\"");
 }

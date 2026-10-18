@@ -99,6 +99,10 @@ public class MySqlIncrementalSourceFactory extends BaseChangeStreamTableSourceFa
                         SourceOptions.STOP_SPECIFIC_OFFSET_FILE,
                         SourceOptions.STOP_SPECIFIC_OFFSET_POS)
                 .conditional(
+                        MySqlIncrementalSourceOptions.STOP_MODE,
+                        StopMode.TIMESTAMP,
+                        SourceOptions.STOP_TIMESTAMP)
+                .conditional(
                         MySqlIncrementalSourceOptions.STARTUP_MODE,
                         StartupMode.TIMESTAMP,
                         SourceOptions.STARTUP_TIMESTAMP)

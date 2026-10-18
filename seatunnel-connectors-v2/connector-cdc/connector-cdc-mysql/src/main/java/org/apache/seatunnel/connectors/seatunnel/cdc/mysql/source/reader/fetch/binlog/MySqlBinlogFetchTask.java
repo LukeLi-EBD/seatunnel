@@ -454,7 +454,7 @@ public class MySqlBinlogFetchTask implements FetchTask<SourceSplitBase> {
             } finally {
                 eventCount++;
                 logBinlogProgress(offsetContext);
-                checkStopOffset(partition, offsetContext);
+                checkStopOffset(partition, offsetContext, event);
             }
         }
 
@@ -516,33 +516,50 @@ public class MySqlBinlogFetchTask implements FetchTask<SourceSplitBase> {
             }
         }
 
-        private void checkStopOffset(MySqlPartition partition, MySqlOffsetContext offsetContext) {
+        private void checkStopOffset(
+                MySqlPartition partition, MySqlOffsetContext offsetContext, Event event) {
             final BinlogOffset currentBinlogOffset =
                     MySqlBinlogSplitReadTask.getBinlogPosition(offsetContext.getOffset());
+            final BinlogOffset stopOffset = (BinlogOffset) binlogSplit.getStopOffset();
 
-            if (currentBinlogOffset.isAtOrAfter(binlogSplit.getStopOffset())) {
-                log.info(
-                        "Reached stop offset {} at current position {}. Stopping binlog reader.",
-                        binlogSplit.getStopOffset(),
-                        currentBinlogOffset);
+            boolean reachedStopOffset;
+            if (stopOffset != null && stopOffset.isTimestampOffset()) {
+                // stop.mode = "timestamp": the stop offset only carries the target epoch second
+                // (no binlog file/position), so it must be compared against the binlog event time.
+                // The binlog event header timestamp is in milliseconds while the stop offset is
+                // stored in seconds.
+                long eventTimestamp = event == null ? 0 : event.getHeader().getTimestamp();
+                reachedStopOffset =
+                        eventTimestamp != 0 && eventTimestamp / 1000 >= stopOffset.getTimestamp();
+            } else {
+                reachedStopOffset = currentBinlogOffset.isAtOrAfter(stopOffset);
+            }
 
-                // Send end watermark event
-                try {
-                    dispatcher.dispatchWatermarkEvent(
-                            partition.getSourcePartition(),
-                            binlogSplit,
-                            currentBinlogOffset,
-                            WatermarkKind.END);
-                } catch (InterruptedException e) {
-                    log.error("Error sending binlog end watermark event", e);
-                    errorHandler.setProducerThrowable(
-                            new DebeziumException("Error processing binlog end event", e));
-                }
+            if (!reachedStopOffset) {
+                return;
+            }
 
-                // Stop the task
-                if (boundedContext != null) {
-                    boundedContext.finished();
-                }
+            log.info(
+                    "Reached stop offset {} at current position {}. Stopping binlog reader.",
+                    stopOffset,
+                    currentBinlogOffset);
+
+            // Send end watermark event
+            try {
+                dispatcher.dispatchWatermarkEvent(
+                        partition.getSourcePartition(),
+                        binlogSplit,
+                        currentBinlogOffset,
+                        WatermarkKind.END);
+            } catch (InterruptedException e) {
+                log.error("Error sending binlog end watermark event", e);
+                errorHandler.setProducerThrowable(
+                        new DebeziumException("Error processing binlog end event", e));
+            }
+
+            // Stop the task
+            if (boundedContext != null) {
+                boundedContext.finished();
             }
         }
 

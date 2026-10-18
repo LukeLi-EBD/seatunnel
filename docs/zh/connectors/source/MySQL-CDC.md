@@ -199,9 +199,10 @@ show variables where variable_name in ('log_bin', 'binlog_format', 'binlog_row_i
 | startup.specific-offset.skip-events       | Long     | 否    | 0       | 配置 specific 启动偏移量后需要跳过的 binlog event 数量. 该选项只能在 `startup.mode` 为 `specific` 时使用.                                                                                                                                                         |
 | startup.specific-offset.skip-rows         | Long     | 否    | 0       | 配置 specific 启动偏移量后需要跳过的行数. 该选项只能在 `startup.mode` 为 `specific` 时使用.                                                                                                                                                                    |
 | startup.timestamp                         | Long     | 否    | -       | 从指定时间戳启动，单位为 Unix 纪元以来的毫秒数。**注意，当 `startup.mode` 为 `timestamp` 时，此选项必填。**                                                                                                                                                                    |
-| stop.mode                                 | Enum     | 否    | NEVER   | MySQL CDC 消费者的可选停止模式, 有效枚举值为 `never`, `latest` 和 `specific`. <br/> `never`: 实时任务一直运行不停止.<br/> `latest`: 从最新的偏移量处停止.<br/> `specific`: 从用户提供的特定偏移量处停止.                                                                                         |
+| stop.mode                                 | Enum     | 否    | NEVER   | MySQL CDC 消费者的可选停止模式, 有效枚举值为 `never`, `latest`, `specific` 和 `timestamp`. <br/> `never`: 实时任务一直运行不停止.<br/> `latest`: 从最新的偏移量处停止.<br/> `specific`: 从用户提供的特定偏移量处停止.<br/> `timestamp`: 从用户提供的时间戳处停止.                                                                                         |
 | stop.specific-offset.file                 | String   | 否    | -       | 从指定的binlog日志文件名停止. **注意, 当使用 `stop.mode` 选项为 `specific` 时，此选项为必填项.**                                                                                                                                                                         |
 | stop.specific-offset.pos                  | Long     | 否    | -       | 从指定的binlog日志文件位置停止. **注意, 当使用 `stop.mode` 选项为 `specific` 时，此选项为必填项.**                                                                                                                                                                        |
+| stop.timestamp                            | Long     | 否    | -       | 从指定时间戳停止，单位为 Unix 纪元以来的毫秒数。读取到 binlog 事件时间戳大于等于该值的事件时即停止。 **注意, 当使用 `stop.mode` 选项为 `timestamp` 时，此选项为必填项.**                                                                                                        |
 | snapshot.split.size                       | Integer  | 否    | 8096    | 表快照的分割大小（行数）,读取表的快照时,被捕获的表会被分割成多个分割块.                                                                                                                                                                                                        |
 | snapshot.fetch.size                       | Integer  | 否    | 1024    | 每次轮询读取表快照时的最大获取大小.                                                                                                                                                                                                                           |
 | server-id                                 | String   | 否    | -       | 此 CDC 读取器使用的数字 ID 或数字 ID 范围，例如 `5400` 或 `5400-5408`。每个 ID 在 MySQL 集群中必须唯一。当任务有多个读取并发或并行读取多张表时，请配置足够大的 ID 范围。未配置时 SeaTunnel 会随机生成 ID，但生产环境建议显式配置。 |
@@ -566,6 +567,30 @@ source {
     stop.mode = "specific"
     stop.specific-offset.file = "mysql-bin.000010"
     stop.specific-offset.pos = 4096
+  }
+}
+```
+
+### 有界读取：在指定时间戳停止
+
+使用 `stop.mode = "timestamp"` 可以按时间限定读取范围：作业读取启动偏移量（或启动时间戳）
+到配置的 `stop.timestamp` 之间的 binlog，当读取到 binlog 事件时间戳到达该值时自行终止
+（`FINISHED`）。
+
+`startup.mode` 和 `stop.mode` 可以同时为 `timestamp`，即整个读取窗口由两个时间戳描述：
+
+```hocon
+source {
+  MySQL-CDC {
+    server-id = 5654
+    username = "st_user_source"
+    password = "mysqlpw"
+    table-names = ["mysql_cdc.mysql_cdc_e2e_source_table"]
+    url = "jdbc:mysql://mysql_cdc_e2e:3306/mysql_cdc"
+    startup.mode = "timestamp"
+    startup.timestamp = 1716076800000
+    stop.mode = "timestamp"
+    stop.timestamp = 1716080400000
   }
 }
 ```
